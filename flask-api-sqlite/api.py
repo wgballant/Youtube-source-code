@@ -1,88 +1,160 @@
+import datetime
+import uuid
+import json
+from datetime import *
 from flask import Flask, make_response, jsonify, request
 import dataset
 
+
 app = Flask(__name__)
-db = dataset.connect('sqlite:///api.db')
-
-'''
-Examples:
-GET request to /api/books returns the details of all books
-POST request to /api/books creates a book with the ID 3 (As per request body)
-
-Sample request body -
-{
-        "book_id": "1",
-        "name": "A Game of Thrones",
-        "author": "George R. R. Martin"
-}
-
-GET request to /api/books/3 returns the details of book 3
-PUT request to /api/books/3 to update fields of book 3
-DELETE request to /api/books/3 deletes book 3
-
-'''
-
-table = db['books']
+db = dataset.connect('sqlite:///restaurants.db')
+table = db['restaurants']
 
 
-def fetch_db(book_id):  # Each book scnerio
-    return table.find_one(book_id=book_id)
+def fetch_db(restaurant_id):
+    return table.find_one(restaurant_id=restaurant_id)
 
 
 def fetch_db_all():
-    books = []
-    for book in table:
-        books.append(book)
-    return books
+    restaurants = []
+    for restaurant in table:
+        restaurants.append(restaurant)
+    return restaurants
 
 
 @app.route('/api/db_populate', methods=['GET'])
 def db_populate():
     table.insert({
-        "book_id": "1",
-        "name": "A Game of Thrones.",
-        "author": "George R. R. Martin"
+        "restaurant_id": str(uuid.uuid1()),
+        "name": "The Chowdown",
+        "Hours": {
+            "Friday": {
+                "open": "7:00PM",
+                "close": "10:00PM"
+            },
+            "Saturday": {
+                "open": "7:00PM",
+                "close": "10:00PM"
+            }
+        }
     })
 
     table.insert({
-        "book_id": "2",
-        "name": "Lord of the Rings",
-        "author": "J. R. R. Tolkien"
+        "restaurant_id": str(uuid.uuid1()),
+        "name": "Bobs Burgers",
+        "Hours": {
+            "Friday": {
+                "open": "7:00PM",
+                "close": "10:00PM"
+            },
+            "Saturday": {
+                "open": "7:00PM",
+                "close": "10:00PM"
+            }
+        }
     })
 
     return make_response(jsonify(fetch_db_all()),
                          200)
 
 
-@app.route('/api/books', methods=['GET', 'POST'])
-def api_books():
+@app.route('/api/db_depopulate', methods=['GET'])
+def db_depopulate():
+    table.delete()
+    return make_response(jsonify(fetch_db_all()),
+                         200)
+
+
+@app.route('/api/restaurants', methods=['GET', 'POST'])
+def api_restaurants():
     if request.method == "GET":
         return make_response(jsonify(fetch_db_all()), 200)
     elif request.method == 'POST':
         content = request.json
-        book_id = content['book_id']
-        table.insert(content)
-        return make_response(jsonify(fetch_db(book_id)), 201)  # 201 = Created
-
-
-@app.route('/api/books/<book_id>', methods=['GET', 'PUT', 'DELETE'])
-def api_each_book(book_id):
-    if request.method == "GET":
-        book_obj = fetch_db(book_id)
-        if book_obj:
-            return make_response(jsonify(book_obj), 200)
+        hours = content['hours']
+        valid_hours, normalized_hours = validate_hours(hours)
+        if valid_hours:
+            content['hours'] = normalized_hours
+            restaurant_id = str(uuid.uuid1())
+            content['restaurant_id'] = restaurant_id
+            table.insert(content)
+            return make_response(jsonify(fetch_db(restaurant_id)), 201)  # 201 = Created
         else:
-            return make_response(jsonify(book_obj), 404)
-    elif request.method == "PUT":  # Updates the book
-        content = request.json
-        table.update(content, ['book_id'])
+            return make_response(jsonify({}), 400)
 
-        book_obj = fetch_db(book_id)
-        return make_response(jsonify(book_obj), 200)
+
+@app.route('/api/restaurants/<restaurant_id>', methods=['GET', 'PUT', 'DELETE'])
+def api_each_restaurant(restaurant_id):
+
+    if request.method == "GET":
+        restaurant_obj = fetch_db(restaurant_id)
+        if restaurant_obj:
+            restaurant_obj['is_open'] = restaurant_open(restaurant_obj['Hours'])
+            return make_response(jsonify(restaurant_obj), 200)
+        else:
+            return make_response(jsonify(restaurant_obj), 404)
+    elif request.method == "PUT":  # Updates the restaurant
+        content = request.json
+        updated_hours = content.get('hours')
+        updated_name = content.get('name')
+        if updated_name:
+            content['name'] = updated_name
+        valid_hours, normalized_hours = validate_hours(updated_hours)
+        if valid_hours:
+            content['Hours'] = normalized_hours
+        content['restaurant_id'] = restaurant_id
+
+        table.update(content, ['restaurant_id'])
+
+        restaurant_obj = fetch_db(restaurant_id)
+        return make_response(jsonify(restaurant_obj), 200)
     elif request.method == "DELETE":
-        table.delete(id=book_id)
+        table.delete(restaurant_id=restaurant_id)
 
         return make_response(jsonify({}), 204)
+
+
+def validate_hours(hours):
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    if not hours:
+        return False
+    hours_dict = json.loads(hours)
+    out_hours = {}
+    for key, value in hours_dict.items():
+        if key not in days:
+            return False
+
+        open_str = value.get('open')
+        close_str = value.get('close')
+        if not (open_str and close_str):
+            return False
+        open_time = datetime.strptime(open_str, "%I:%M%p")
+        close_time = datetime.strptime(close_str, "%I:%M%p")
+        if open_time > close_time:
+            return False
+        open_time_24h = datetime.strftime(open_time, "%H:%M")
+        close_time_24h = datetime.strftime(close_time, "%H:%M")
+        out_hours[key] = {'open': open_time_24h, 'close': close_time_24h}
+
+    return True, out_hours
+
+
+def restaurant_open(hours):
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    now = datetime.now()
+    day = days[datetime.weekday(now)]
+    hours_today = hours.get(day)
+    if not hours_today:
+        return False
+    now = now.replace(year=1900, month=1, day=1)
+    open_obj = datetime.strptime(hours_today['open'], "%H:%M")
+    close_obj = datetime.strptime(hours_today['close'], "%H:%M")
+    if open_obj < now < close_obj:
+        return True
+    return False
+
 
 
 if __name__ == '__main__':
