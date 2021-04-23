@@ -1,6 +1,7 @@
 import datetime
-import uuid
 import json
+import uuid
+
 from datetime import *
 from flask import Flask, make_response, jsonify, request
 import dataset
@@ -11,67 +12,16 @@ db = dataset.connect('sqlite:///restaurants.db')
 table = db['restaurants']
 
 
-def fetch_db(restaurant_id):
-    return table.find_one(restaurant_id=restaurant_id)
-
-
-def fetch_db_all():
-    restaurants = []
-    for restaurant in table:
-        restaurants.append(restaurant)
-    return restaurants
-
-
-@app.route('/api/db_populate', methods=['GET'])
-def db_populate():
-    table.insert({
-        "restaurant_id": str(uuid.uuid1()),
-        "name": "The Chowdown",
-        "Hours": {
-            "Friday": {
-                "open": "7:00PM",
-                "close": "10:00PM"
-            },
-            "Saturday": {
-                "open": "7:00PM",
-                "close": "10:00PM"
-            }
-        }
-    })
-
-    table.insert({
-        "restaurant_id": str(uuid.uuid1()),
-        "name": "Bobs Burgers",
-        "Hours": {
-            "Friday": {
-                "open": "7:00PM",
-                "close": "10:00PM"
-            },
-            "Saturday": {
-                "open": "7:00PM",
-                "close": "10:00PM"
-            }
-        }
-    })
-
-    return make_response(jsonify(fetch_db_all()),
-                         200)
-
-
-@app.route('/api/db_depopulate', methods=['GET'])
-def db_depopulate():
-    table.delete()
-    return make_response(jsonify(fetch_db_all()),
-                         200)
-
-
 @app.route('/api/restaurants', methods=['GET', 'POST'])
 def api_restaurants():
     if request.method == "GET":
         return make_response(jsonify(fetch_db_all()), 200)
     elif request.method == 'POST':
         content = request.json
-        hours = content['hours']
+        hours = content.get('hours')
+        name = content.get('name')
+        if not name or not hours:
+            return make_response(jsonify({}), 400)
         valid_hours, normalized_hours = validate_hours(hours)
         if valid_hours:
             content['hours'] = normalized_hours
@@ -79,8 +29,7 @@ def api_restaurants():
             content['restaurant_id'] = restaurant_id
             table.insert(content)
             return make_response(jsonify(fetch_db(restaurant_id)), 201)  # 201 = Created
-        else:
-            return make_response(jsonify({}), 400)
+        return make_response(jsonify({}), 400)
 
 
 @app.route('/api/restaurants/<restaurant_id>', methods=['GET', 'PUT', 'DELETE'])
@@ -95,23 +44,63 @@ def api_each_restaurant(restaurant_id):
             return make_response(jsonify(restaurant_obj), 404)
     elif request.method == "PUT":  # Updates the restaurant
         content = request.json
-        updated_hours = content.get('hours')
+        content['restaurant_id'] = restaurant_id
+        updated_hours = content.get('Hours')
         updated_name = content.get('name')
         if updated_name:
             content['name'] = updated_name
         valid_hours, normalized_hours = validate_hours(updated_hours)
         if valid_hours:
             content['Hours'] = normalized_hours
-        content['restaurant_id'] = restaurant_id
-
         table.update(content, ['restaurant_id'])
-
         restaurant_obj = fetch_db(restaurant_id)
         return make_response(jsonify(restaurant_obj), 200)
     elif request.method == "DELETE":
         table.delete(restaurant_id=restaurant_id)
-
         return make_response(jsonify({}), 204)
+
+
+@app.route('/api/db_populate', methods=['GET'])
+def db_populate():
+    table.insert({
+        "restaurant_id": str(uuid.uuid1()),
+        "name": "The Chowdown",
+        "hours": {
+            "Friday": {
+                "open": "19:00",
+                "close": "22:00"
+            },
+            "Saturday": {
+                "open": "19:00",
+                "close": "22:00"
+            }
+        }
+    })
+
+    table.insert({
+        "restaurant_id": str(uuid.uuid1()),
+        "name": "Bobs Burgers",
+        "hours": {
+            "Friday": {
+                "open": "19:00",
+                "close": "22:00"
+            },
+            "Saturday": {
+                "open": "16:00",
+                "close": "23:00"
+            }
+        }
+    })
+
+    return make_response(jsonify(fetch_db_all()),
+                         200)
+
+
+@app.route('/api/db_depopulate', methods=['GET'])
+def db_depopulate():
+    table.delete()
+    return make_response(jsonify(fetch_db_all()),
+                         200)
 
 
 def validate_hours(hours):
@@ -155,6 +144,16 @@ def restaurant_open(hours):
         return True
     return False
 
+
+def fetch_db(restaurant_id):
+    return table.find_one(restaurant_id=restaurant_id)
+
+
+def fetch_db_all():
+    restaurants = []
+    for restaurant in table:
+        restaurants.append(restaurant)
+    return restaurants
 
 
 if __name__ == '__main__':
